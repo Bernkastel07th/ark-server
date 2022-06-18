@@ -1,68 +1,107 @@
-FROM        debian:buster-slim
+FROM ubuntu:14.04
 
-LABEL       MAINTAINER="https://github.com/Hermsi1337/"
+MAINTAINER TuRzAm
 
-ARG         ARK_TOOLS_VERSION="1.6.60b"
-ENV         LANG="en_US.UTF-8" \
-            LANGUAGE="en_US:en" \
-            LC_ALL="en_US.UTF-8" \
-            TERM="linux" \
-            SESSION_NAME="Dockerized ARK Server by github.com/hermsi1337" \
-            SERVER_MAP="TheIsland" \
-            SERVER_PASSWORD="YouShallNotPass" \
-            ADMIN_PASSWORD="Th155houldD3f1n3tlyB3Chang3d" \
-            MAX_PLAYERS="20" \
-            GAME_MOD_IDS="" \
-            UPDATE_ON_START="false" \
-            BACKUP_ON_STOP="false" \
-            PRE_UPDATE_BACKUP="true" \
-            WARN_ON_STOP="true" \
-            ARK_TOOLS_VERSION="${ARK_TOOLS_VERSION}" \
-            ARK_SERVER_VOLUME="/app" \
-            TEMPLATE_DIRECTORY="/conf.d" \
-            GAME_CLIENT_PORT="7777" \
-            UDP_SOCKET_PORT="7778" \
-            RCON_PORT="27020" \
-            SERVER_LIST_PORT="27015" \
-            STEAM_USER="steam" \
-            STEAM_GROUP="steam" \
-            STEAM_UID="1000" \
-            STEAM_GID="1000"
+# Var for first config
+# Server Name
+ENV SESSIONNAME "Ark Docker"
+# Map name
+ENV SERVERMAP "TheIsland"
+# Server password
+ENV SERVERPASSWORD ""
+# Admin password
+ENV ADMINPASSWORD "adminpassword"
+# Nb Players
+ENV NBPLAYERS 70
+# If the server is updating when start with docker start
+ENV UPDATEONSTART 1
+# if the server is backup when start with docker start
+ENV BACKUPONSTART 1
+#  Tag on github for ark server tools
+ENV GIT_TAG v1.5
+# Server PORT (you can't remap with docker, it doesn't work)
+ENV SERVERPORT 27015
+# Steam port (you can't remap with docker, it doesn't work)
+ENV STEAMPORT 7778
+# if the server should backup after stopping
+ENV BACKUPONSTOP 0
+# If the server warn the players before stopping
+ENV WARNONSTOP 0
+# UID of the user steam
+ENV UID 1000
+# GID of the user steam
+ENV GID 1000
 
-ENV         ARK_TOOLS_DIR="${ARK_SERVER_VOLUME}/arkmanager" \
-            STEAM_HOME="/home/${STEAM_USER}"
+# Install dependencies 
+RUN apt-get update &&\ 
+    apt-get install -y curl lib32gcc1 lsof git
 
-RUN         set -x && \
-            dpkg --add-architecture i386 && \
-            apt-get -qq update && apt-get -qq upgrade && \
-            apt-get -qq install libsdl2-2.0-0:i386 libcurl4 curl lib32gcc1 lsof perl-modules libc6-i386 bzip2 bash-completion locales sudo cron && \
-            sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen && \
-            addgroup --gid ${STEAM_GID} ${STEAM_USER} && \
-            adduser --home ${STEAM_HOME} --uid ${STEAM_UID} --gid ${STEAM_GID} --disabled-login --shell /bin/bash --gecos "" ${STEAM_USER} && \
-            echo "${STEAM_USER} ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
-            usermod -a -G sudo ${STEAM_USER} && \
-            mkdir -p ${ARK_SERVER_VOLUME} ${STEAM_HOME}/steamcmd && \
-            curl -L "https://github.com/arkmanager/ark-server-tools/archive/v${ARK_TOOLS_VERSION}.tar.gz" \
-                | tar -xvzf - -C /tmp/ && \
-            bash -c "cd /tmp/ark-server-tools-${ARK_TOOLS_VERSION}/tools && bash install.sh ${STEAM_USER}" && \
-            ln -s /usr/local/bin/arkmanager /usr/bin/arkmanager && \
-            curl -L "https://media.steampowered.com/installer/steamcmd_linux.tar.gz" \
-                | tar -xvzf - -C ${STEAM_HOME}/steamcmd/ && \
-            bash -x ${STEAM_HOME}/steamcmd/steamcmd.sh +login anonymous +quit && \
-            chown -R ${STEAM_USER}:${STEAM_GROUP} ${STEAM_HOME} ${ARK_SERVER_VOLUME} && \
-            chmod 755 /root/ && \
-            apt-get -qq autoclean && apt-get -qq autoremove && apt-get -qq clean && \
-            rm -rf /tmp/* /var/cache/*
+# Enable passwordless sudo for users under the "sudo" group
+RUN sed -i.bkp -e \
+	's/%sudo\s\+ALL=(ALL\(:ALL\)\?)\s\+ALL/%sudo ALL=NOPASSWD:ALL/g' /etc/sudoers \
+	/etc/sudoers
 
-COPY        bin/    /
-COPY        conf.d  ${TEMPLATE_DIRECTORY}
+# Run commands as the steam user
+RUN adduser \ 
+	--disabled-login \ 
+	--shell /bin/bash \ 
+	--gecos "" \ 
+	steam
+# Add to sudo group
+RUN usermod -a -G sudo steam
 
-EXPOSE      ${GAME_CLIENT_PORT}/udp ${UDP_SOCKET_PORT}/udp ${SERVER_LIST_PORT}/udp ${RCON_PORT}/tcp
+# Copy & rights to folders
+COPY run.sh /home/steam/run.sh
+COPY user.sh /home/steam/user.sh
+COPY crontab /home/steam/crontab
+COPY arkmanager-user.cfg /home/steam/arkmanager.cfg
 
-VOLUME      ["${ARK_SERVER_VOLUME}"]
-WORKDIR     ${ARK_SERVER_VOLUME}
+RUN touch /root/.bash_profile
+RUN chmod 777 /home/steam/run.sh
+RUN chmod 777 /home/steam/user.sh
+RUN mkdir  /ark
 
-USER        ${STEAM_USER}
 
-ENTRYPOINT  ["/entrypoint.sh"]
-CMD         []
+# We use the git method, because api github has a limit ;)
+RUN  git clone https://github.com/FezVrasta/ark-server-tools.git /home/steam/ark-server-tools
+WORKDIR /home/steam/ark-server-tools/
+RUN  git checkout $GIT_TAG 
+# Install 
+WORKDIR /home/steam/ark-server-tools/tools
+RUN chmod +x install.sh 
+RUN ./install.sh steam 
+
+# Allow crontab to call arkmanager
+RUN ln -s /usr/local/bin/arkmanager /usr/bin/arkmanager
+
+# Define default config file in /etc/arkmanager
+COPY arkmanager-system.cfg /etc/arkmanager/arkmanager.cfg
+
+# Define default config file in /etc/arkmanager
+COPY instance.cfg /etc/arkmanager/instances/main.cfg
+
+RUN chown steam -R /ark && chmod 755 -R /ark
+
+#USER steam 
+
+# download steamcmd
+RUN mkdir /home/steam/steamcmd &&\ 
+	cd /home/steam/steamcmd &&\ 
+	curl http://media.steampowered.com/installer/steamcmd_linux.tar.gz | tar -vxz 
+
+
+# First run is on anonymous to download the app
+# We can't download from docker hub anymore -_-
+#RUN /home/steam/steamcmd/steamcmd.sh +login anonymous +quit
+
+EXPOSE ${STEAMPORT} 32330 ${SERVERPORT}
+# Add UDP
+EXPOSE ${STEAMPORT}/udp ${SERVERPORT}/udp
+
+VOLUME  /ark 
+
+# Change the working directory to /arkd
+WORKDIR /ark
+
+# Update game launch the game.
+ENTRYPOINT ["/home/steam/user.sh"]
